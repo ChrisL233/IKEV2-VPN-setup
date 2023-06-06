@@ -1,142 +1,98 @@
 #!/bin/bash
+# This script will manage the iKev2 server on an Ubuntu 20.04 LTS system.
 
-# Function to add a new configuration
-add_configuration() {
-    echo "Creating a new user configuration..."
-    read -p "Enter VPN username: " new_username
-    read -s -p "Enter VPN password: " new_password
+# Make sure only root can run this script
+if [ "$(id -u)" != "0" ]; then
+   echo "This script must be run as root" 1>&2
+   exit 1
+fi
 
-    sudo bash -c "echo -n \"$new_username : EAP : \"$new_password >> /etc/ipsec.secrets"
+# Function to add a user
+add_user() {
+    read -p "Enter the new client's name: " CLIENT_NAME
+    read -s -p "Enter the new client's password: " CLIENT_PASSWORD
+    echo
 
-    sudo ipsec pki --gen --type rsa --size 4096 --outform pem > ${new_username}-key.pem
-    sudo ipsec pki --pub --in ${new_username}-key.pem --type rsa | sudo tee ${new_username}-pub.pem
+    # Add the user to ipsec.secrets
+    echo "$CLIENT_NAME : EAP \"$CLIENT_PASSWORD\"" >> /etc/ipsec.secrets
 
-    sudo bash -c "cat > ${new_username}.conf << EOL
-conn ${new_username}
-    auto=add
-    compress=no
-    type=tunnel
-    keyexchange=ikev2
-    fragmentation=yes
-    forceencaps=yes
-    ike=aes256-sha256-modp2048!
-    esp=aes256-sha256!
-    dpdaction=clear
-    dpddelay=300s
-    rekey=no
-    leftid=${new_username}
-    leftcert=${new_username}-cert.pem
-    leftsendcert=always
-    leftsubnet=0.0.0.0/0
-    right=%any
-    rightid=%any
-    rightauth=eap-mschapv2
-    rightsourceip=10.10.10.0/24
-    rightsendcert=never
-    eap_identity=${new_username}
-EOL"
+    # Restart the IPsec service
+    systemctl restart strongswan-starter
 
-    sudo ipsec reload
-
-    echo "New user configuration created: ${new_username}"
-    echo ""
+    echo "User $CLIENT_NAME added."
 }
 
-# Function to remove an existing configuration
-remove_configuration() {
-    echo "Removing an existing user configuration..."
-    read -p "Enter VPN username to remove: " username_to_remove
+# Function to remove a user
+remove_user() {
+    read -p "Enter the client's name to remove: " CLIENT_NAME
 
-    sudo sed -i "/^${username_to_remove} /d" /etc/ipsec.secrets
+    # Remove the user from ipsec.secrets
+    sed -i "/$CLIENT_NAME/d" /etc/ipsec.secrets
 
-    sudo rm -f ${username_to_remove}-key.pem
-    sudo rm -f ${username_to_remove}-pub.pem
-    sudo rm -f ${username_to_remove}.conf
+    # Restart the IPsec service
+    systemctl restart strongswan-starter
 
-    sudo ipsec reload
-
-    echo "User configuration removed: ${username_to_remove}"
-    echo ""
+    echo "User $CLIENT_NAME removed."
 }
 
-# Function to list all existing configurations
-list_configurations() {
-    echo "Existing Configurations:"
-    echo "-----------------------"
-
-    if ls *.conf &>/dev/null; then
-        ls *.conf
-    else
-        echo "No configurations found."
-    fi
-
-    echo ""
+# Function to list users
+list_users() {
+    echo "Existing users:"
+    grep : /etc/ipsec.secrets | cut -d':' -f1
 }
 
 # Function to reboot the server
 reboot_server() {
     echo "Rebooting the server..."
-    sudo reboot
+    reboot
 }
 
 # Function to reinstall the VPN server
-reinstall_server() {
+reinstall_vpn() {
     echo "Reinstalling the VPN server..."
-    read -p "Are you sure you want to reinstall the VPN server? This will remove all existing configurations. [Y/N]: " choice
-    case $choice in
-        [Yy])
-            sudo rm -rf /etc/ipsec.d/*
-            sudo systemctl stop strongswan
-            sudo apt remove -y strongswan
-            sudo apt install -y strongswan
-            sudo systemctl start strongswan
-            echo "VPN server reinstalled."
-            ;;
-        [Nn])
-            echo "Reinstallation canceled."
-            ;;
-        *)
-            echo "Invalid choice. Reinstallation canceled."
-            ;;
-    esac
-    echo ""
+
+    # Download the setup script from the GitHub repository
+    wget -O setup_ikev2_server.sh https://github.com/ChrisL233/IKEV2-VPN-setup/raw/main/setup_ikev2_server.sh
+
+    # Make the setup script executable
+    chmod +x setup_ikev2_server.sh
+
+    # Run the setup script
+    ./setup_ikev2_server.sh
 }
 
-# Main menu
-while true; do
-    echo "IKEv2 VPN Server Management"
-    echo "---------------------------"
-    echo "Select an option:"
-    echo "1. Add new user configuration"
-    echo "2. Remove existing user configuration"
-    echo "3. List existing user configurations"
+while true
+do
+    echo "1. Add a user"
+    echo "2. Remove a user"
+    echo "3. List users"
     echo "4. Reboot the server"
     echo "5. Reinstall the VPN server"
     echo "6. Exit"
-    read -p "Enter your choice: " choice
+    read -p "Choose an option: " OPTION
 
-    case $choice in
+    case $OPTION in
         1)
-            add_configuration
+            add_user
             ;;
         2)
-            remove_configuration
+            remove_user
             ;;
         3)
-            list_configurations
+            list_users
             ;;
         4)
             reboot_server
             ;;
         5)
-            reinstall_server
+            reinstall_vpn
             ;;
         6)
             exit 0
             ;;
         *)
-            echo "Invalid choice. Please try again."
-            echo ""
+            echo "Invalid option. Try again."
             ;;
     esac
 done
+
